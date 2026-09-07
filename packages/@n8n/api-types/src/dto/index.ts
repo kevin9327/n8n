@@ -79,6 +79,7 @@ export {
 	CreatedProjectPublicDto,
 	CreateProjectPublicDto,
 	ListProjectsQueryPublicDto,
+	UpdateProjectPublicDto,
 } from './project/project-public.dto';
 
 export { SamlAcsDto } from './saml/saml-acs.dto';
