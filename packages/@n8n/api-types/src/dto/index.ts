@@ -80,6 +80,12 @@ export {
 	CreateProjectPublicDto,
 	ListProjectsQueryPublicDto,
 } from './project/project-public.dto';
+export {
+	projectMemberPublicSchema,
+	ProjectMemberPublicDto,
+	ProjectMemberListPublicDto,
+	ListProjectMembersQueryPublicDto,
+} from './project/project-member-public.dto';
 
 export { SamlAcsDto } from './saml/saml-acs.dto';
 export { SamlPreferences } from './saml/saml-preferences.dto';
