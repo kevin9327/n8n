@@ -86,17 +86,12 @@ export class PublicApiControllerRegistry {
 
 				if (res.headersSent) return;
 
-				if (successStatus === 204) {
-					res.status(204).send();
+				if (successStatus === 204 || !route.responseDto) {
+					res.status(successStatus).send();
 					return;
 				}
 
-				if (route.responseDto) {
-					res.status(successStatus).json(route.responseDto.parse(result));
-					return;
-				}
-
-				res.status(successStatus).json(result);
+				res.status(successStatus).json(route.responseDto.parse(result));
 			};
 
 			const middlewares: RequestHandler[] = [];
