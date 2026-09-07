@@ -81,6 +81,23 @@ describe('formatValidationError', () => {
 
 			expect(message).toBe('request/body/name Expected string, received null');
 		});
+
+		it('names a missing field whose schema is a union', () => {
+			const role = z.union([z.enum(['project:admin']), z.string().nonempty()]);
+			const relations = z.object({ relations: z.array(z.object({ role })) });
+
+			const message = formatValidationError('body', errorFrom(relations, { relations: [{}] }));
+
+			expect(message).toBe("request/body/relations/0 must have required property 'role'");
+		});
+
+		it('does not apply to a union field that is present but rejected', () => {
+			const role = z.union([z.enum(['project:admin']), z.number()]);
+
+			const message = formatValidationError('body', errorFrom(z.object({ role }), { role: true }));
+
+			expect(message).toBe('request/body/role Invalid input');
+		});
 	});
 
 	it('falls back when the error carries no issues', () => {

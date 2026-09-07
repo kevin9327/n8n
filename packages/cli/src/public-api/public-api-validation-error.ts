@@ -1,4 +1,18 @@
-import type { ZodError } from 'zod';
+import type { ZodError, ZodIssue } from 'zod';
+
+/** A union reports a missing value once per member, each at the union's own path. */
+function isMissingValue(issue: ZodIssue): boolean {
+	if (issue.code === 'invalid_type') return issue.received === 'undefined';
+
+	if (issue.code === 'invalid_union') {
+		const path = issue.path.join('/');
+		return issue.unionErrors.every((error) =>
+			error.errors.some((inner) => inner.path.join('/') === path && isMissingValue(inner)),
+		);
+	}
+
+	return false;
+}
 
 /**
  * Names the offending field in a validation failure, the way the legacy validator did:
@@ -12,7 +26,7 @@ export function formatValidationError(location: 'body' | 'query', error: ZodErro
 	// A missing field is the one case where Zod and Ajv disagree on more than wording: Ajv blames
 	// the containing object and names the field in the message, Zod blames the field. Two public
 	// API tests already pin Ajv's form, so keep it.
-	if (issue.code === 'invalid_type' && issue.received === 'undefined' && issue.path.length > 0) {
+	if (issue.path.length > 0 && isMissingValue(issue)) {
 		const parent = issue.path.slice(0, -1);
 		const field = issue.path[issue.path.length - 1];
 		const prefix = parent.length > 0 ? `/${parent.join('/')}` : '';
