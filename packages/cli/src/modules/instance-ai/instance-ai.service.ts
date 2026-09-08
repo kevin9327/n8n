@@ -19,6 +19,7 @@ import {
 	type InstanceAiAppAttachment,
 	type InstanceAiFileAttachment,
 	type InstanceAiNodesAttachment,
+	type InstanceAiAppPreviewDiagnosticsAttachment,
 	type InstanceAiResourceAttachment,
 	type InstanceAiWorkflowAttachment,
 	type InstanceAiConfirmRequest,
@@ -139,6 +140,7 @@ import { Telemetry } from '@/telemetry';
 import { assertNever } from '@/utils';
 
 import { resolveAgentPreviewHandoff } from './agent-preview-handoff';
+import { AppPreviewService } from './app-preview/app-preview.service';
 import { composeLocalMcpServers } from './browser/composite-local-mcp-server';
 import { InstanceAiBrowserSessionService } from './browser/instance-ai-browser-session.service';
 import { CanvasNodeContextFlagGate } from './canvas-node-context-flag-gate';
@@ -297,6 +299,24 @@ function buildAppAttachmentLine(attachment: InstanceAiAppAttachment): string {
 	return `- New app "${attachment.name}"${namespace} that does not exist yet, in project \`${attachment.projectId}\`. When the user asks to build it, first call \`apps\` with action \`create\` using exactly this name${attachment.namespace ? ', namespace' : ''} and project id, then build it with action \`build\` on the returned \`appId\`.`;
 }
 
+/**
+ * Renders the errors the live preview reported since the user's last message
+ * as plain text. The message and stack are the app's own strings, so they go
+ * in a fenced block and never as markup.
+ */
+function buildAppPreviewDiagnosticsBlock(
+	attachment: InstanceAiAppPreviewDiagnosticsAttachment,
+): string {
+	const items = attachment.items.map((item) => {
+		const where = item.file
+			? ` at ${item.file}${item.line !== undefined ? `:${item.line}` : ''}${item.column !== undefined ? `:${item.column}` : ''}`
+			: '';
+		const stack = item.stack ? `\n${item.stack}` : '';
+		return `[${item.at}] ${item.kind}${where}: ${item.message}${stack}`;
+	});
+	return `Errors observed in the live preview of app \`${attachment.appId}\` since your last message (${items.length}). Fix them before anything else:\n\`\`\`text\n${items.join('\n\n')}\n\`\`\``;
+}
+
 export function buildContextResourcesBlock(
 	contextAttachments: InstanceAiResourceAttachment[],
 ): string {
@@ -304,7 +324,20 @@ export function buildContextResourcesBlock(
 		return '';
 	}
 
-	const lines = contextAttachments.map((attachment) => {
+	const diagnosticsBlocks = contextAttachments
+		.filter(
+			(attachment): attachment is InstanceAiAppPreviewDiagnosticsAttachment =>
+				attachment.type === 'app-preview-diagnostics',
+		)
+		.map(buildAppPreviewDiagnosticsBlock);
+	const resourceAttachments = contextAttachments.filter(
+		(attachment) => attachment.type !== 'app-preview-diagnostics',
+	);
+	if (resourceAttachments.length === 0) {
+		return `${EDITOR_CONTEXT_OPEN_TAG}\n${JSON.stringify(contextAttachments)}\n\n${diagnosticsBlocks.join('\n\n')}\n${EDITOR_CONTEXT_CLOSE_TAG}`;
+	}
+
+	const lines = resourceAttachments.map((attachment) => {
 		if (attachment.type === 'nodes') {
 			return buildNodesAttachmentLine(attachment);
 		}
@@ -331,13 +364,13 @@ export function buildContextResourcesBlock(
 		return `- Workflow${name} (id: \`${attachment.id}\`)${execution}.`;
 	});
 
-	const header = contextAttachments.some((attachment) => attachment.type === 'agent')
+	const header = resourceAttachments.some((attachment) => attachment.type === 'agent')
 		? 'The user opened this conversation from the agent editor, where they are looking at:'
-		: contextAttachments.some((attachment) => attachment.type === 'app')
+		: resourceAttachments.some((attachment) => attachment.type === 'app')
 			? 'The user opened this conversation from the apps page, where they are looking at:'
 			: 'The user opened this conversation from the workflow editor, where they are looking at:';
 
-	const pendingAgentGuidance = contextAttachments.some(
+	const pendingAgentGuidance = resourceAttachments.some(
 		(attachment) => attachment.type === 'agent' && attachment.pending,
 	)
 		? "Treat references such as “the agent” as this pending artifact. It has no persisted agent row yet. When the user asks to build or change it, use `build-agent`'s new-agent path with a name; do not pass its pending id as an existing `agentId`. The thread's pending target will make creation reuse that id."
@@ -348,6 +381,7 @@ export function buildContextResourcesBlock(
 		...lines,
 		pendingAgentGuidance,
 		"Treat this purely as context. Until the user tells you what they need, don't read, inspect, run, or otherwise call tools on these resources, and don't make claims about their contents — just briefly acknowledge what they're working on and ask how you can help.",
+		...diagnosticsBlocks,
 	]
 		.filter(Boolean)
 		.join('\n');
@@ -365,7 +399,11 @@ function isNamedResourceAttachment(
 	| InstanceAiWorkflowAttachment
 	| InstanceAiAgentAttachment
 	| InstanceAiAppAttachment {
-	return attachment.type !== 'nodes' && Boolean(attachment.name);
+	return (
+		attachment.type !== 'nodes' &&
+		attachment.type !== 'app-preview-diagnostics' &&
+		Boolean(attachment.name)
+	);
 }
 
 function buildHandoffContextBlock(context: InstanceAiHandoffContext | undefined): string {
@@ -1906,9 +1944,25 @@ export class InstanceAiService {
 		this.tracing.deleteTraceContextsForThread(threadId);
 		await this.deleteAgentBuilderSessions(threadId);
 		await this.sandboxService.destroySandbox(threadId);
+		Container.get(AppPreviewService).clearThread(threadId);
 		await this.temporaryWorkflowService.reapForThreadCleanup(threadId);
 		await this.suspendedThreads.dropPendingConfirmationsForThread(threadId);
 		this.eventBus.clearThread(threadId);
+	}
+
+	/**
+	 * Where a thread's workspace lives when the provider is the n8n sandbox
+	 * service; null for Daytona or a disabled sandbox. Only that service can
+	 * route to a port inside the sandbox, which the live app preview needs.
+	 */
+	async getN8nSandboxConfig(user: User): Promise<{ url: string; apiKey?: string } | null> {
+		try {
+			const config = await this.sandboxService.resolveSandboxConfig(user);
+			if (!config.enabled || config.provider !== 'n8n-sandbox') return null;
+			return { url: config.serviceUrl, apiKey: config.apiKey };
+		} catch {
+			return null;
+		}
 	}
 
 	/** Builder sub-agent sessions (`ia-builder:<threadId>:*`) live in the agents
@@ -3640,6 +3694,11 @@ export class InstanceAiService {
 			(attachment): attachment is InstanceAiNodesAttachment => attachment.type === 'nodes',
 		);
 
+		const previewDiagnostics = attachmentsOrEmpty.filter(
+			(attachment): attachment is InstanceAiAppPreviewDiagnosticsAttachment =>
+				attachment.type === 'app-preview-diagnostics',
+		);
+
 		const canvasNodeContextEnabled =
 			nodeAttachments.length > 0 && (await this.canvasNodeContextFlagGate.isEnabled(user));
 
@@ -3648,6 +3707,7 @@ export class InstanceAiService {
 			...agentAttachments,
 			...appAttachments,
 			...(canvasNodeContextEnabled ? nodeAttachments : []),
+			...previewDiagnostics,
 		];
 	}
 
@@ -3729,6 +3789,10 @@ export class InstanceAiService {
 				traceInput.resourceAttachments = contextAttachments.map((attachment) => {
 					if (attachment.type === 'nodes') {
 						return { type: attachment.type, id: attachment.workflowId };
+					}
+
+					if (attachment.type === 'app-preview-diagnostics') {
+						return { type: attachment.type, id: attachment.appId };
 					}
 
 					if (attachment.type === 'app') {
