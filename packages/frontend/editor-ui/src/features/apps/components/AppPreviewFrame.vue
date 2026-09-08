@@ -1,43 +1,70 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import type { InstanceAiAppPreviewDiagnostic } from '@n8n/api-types';
+import { instanceAiAppPreviewDiagnosticSchema } from '@n8n/api-types';
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue';
 import { useI18n } from '@n8n/i18n';
 
 const props = withDefaults(
 	defineProps<{
 		namespace: string;
-		/** Built version to show. The parent renders its own empty state when there is none. */
-		versionId: string;
+		/** Built version to show. The parent renders its own empty state when there is neither this nor `liveUrl`. */
+		versionId?: string;
+		/** Dev-server URL for this thread; wins over the built version while present. */
+		liveUrl?: string;
 		/** A specific page's path within the app (e.g. "clients/:id"); the app root when omitted. */
 		path?: string;
 		/** CSS width of the document; `390px` mimics a phone. */
 		width?: string;
 	}>(),
-	{ path: '', width: '100%' },
+	{ versionId: undefined, liveUrl: undefined, path: '', width: '100%' },
 );
+
+const emit = defineEmits<{ diagnostic: [InstanceAiAppPreviewDiagnostic] }>();
 
 const i18n = useI18n();
 
+const iframe = useTemplateRef<HTMLIFrameElement>('iframe');
 const refreshCount = ref(0);
 
-// A new build already reloads the iframe; carrying `r` over would keep a stale
-// cache-buster on the new version's URL.
-watch(
-	() => props.versionId,
-	() => {
-		refreshCount.value = 0;
-	},
-);
+// One live document survives every `apps build`; only the built preview remounts per version.
+const iframeKey = computed(() => (props.liveUrl ? 'live' : (props.versionId ?? '')));
+
+// A remount already loads a fresh document; carrying `r` over would keep a
+// stale cache-buster on the new URL.
+watch(iframeKey, () => {
+	refreshCount.value = 0;
+});
 
 // `v` busts the browser cache on every new build; `r` on every manual refresh.
 const iframeSrc = computed(() => {
 	const pathSegments = props.path.split('/').filter(Boolean).map(encodeURIComponent).join('/');
-	const base = `/apps/${props.namespace}/${pathSegments}?v=${props.versionId}`;
-	return refreshCount.value > 0 ? `${base}&r=${refreshCount.value}` : base;
+	// The live URL is `/apps-preview/<token>/`, so the page path appends directly.
+	const base = props.liveUrl
+		? `${props.liveUrl}${pathSegments}`
+		: `/apps/${props.namespace}/${pathSegments}?v=${props.versionId}`;
+	if (refreshCount.value === 0) return base;
+	return `${base}${base.includes('?') ? '&' : '?'}r=${refreshCount.value}`;
 });
 
 function refresh() {
 	refreshCount.value++;
 }
+
+// The document has an opaque origin (CSP `sandbox` without `allow-same-origin`),
+// so `event.origin` is 'null' and the sender is identified by its window instead.
+function onMessage(event: MessageEvent<unknown>) {
+	if (!iframe.value?.contentWindow || event.source !== iframe.value.contentWindow) return;
+	const data = event.data;
+	if (typeof data !== 'object' || data === null) return;
+	if (!('source' in data) || data.source !== 'n8n-app-preview' || !('v' in data) || data.v !== 1) {
+		return;
+	}
+	const parsed = instanceAiAppPreviewDiagnosticSchema.safeParse(data);
+	if (parsed.success) emit('diagnostic', parsed.data);
+}
+
+onMounted(() => window.addEventListener('message', onMessage));
+onBeforeUnmount(() => window.removeEventListener('message', onMessage));
 
 defineExpose({ refresh });
 </script>
@@ -46,7 +73,8 @@ defineExpose({ refresh });
 	<div :class="$style.frame" data-test-id="app-preview-frame">
 		<!-- The served document is CSP-sandboxed by the backend, so the iframe needs no sandbox attribute. -->
 		<iframe
-			:key="props.versionId"
+			:key="iframeKey"
+			ref="iframe"
 			:src="iframeSrc"
 			:title="i18n.baseText('instanceAi.appPreview.title')"
 			:class="$style.iframe"

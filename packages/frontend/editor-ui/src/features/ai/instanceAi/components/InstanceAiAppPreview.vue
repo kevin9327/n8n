@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { watch } from 'vue';
+import { inject, watch } from 'vue';
 import { N8nIcon } from '@n8n/design-system';
 import { useI18n } from '@n8n/i18n';
 import { useToast } from '@n8n/composables/useToast';
+import { useDocumentVisibility } from '@/app/composables/useDocumentVisibility';
 import AppDetailsView from '@/features/apps/AppDetailsView.vue';
+import { useAppLivePreview } from '@/features/apps/composables/useAppLivePreview';
 import { getAppBuilderTargetFromThreadMetadata } from '../instanceAi.threadRuntime';
 import { useThread, useInstanceAiStore } from '../instanceAi.store';
 import { INSTANCE_AI_APP_BUILDER_TARGET_METADATA_KEY } from '../constants';
+import type { AppPreviewDiagnostics } from '../composables/useAppPreviewDiagnostics';
 
 const props = defineProps<{
 	appId: string;
@@ -23,6 +26,16 @@ const thread = useThread();
 const instanceAiStore = useInstanceAiStore();
 const i18n = useI18n();
 const toast = useToast();
+
+// The thread view only mounts this component while the preview tab is shown,
+// so the document's visibility is the remaining gate for the dev server.
+const { isVisible } = useDocumentVisibility();
+const live = useAppLivePreview(
+	{ projectId: () => props.projectId, appId: () => props.appId, threadId: () => thread.id },
+	isVisible,
+);
+
+const diagnostics = inject<AppPreviewDiagnostics | undefined>('appPreviewDiagnostics', undefined);
 
 // Showing an app binds the thread to it, so a later visit reopens this tab and
 // the agent keeps building the same app.
@@ -69,6 +82,9 @@ watch(() => props.appId, syncAppTarget, { immediate: true });
 			:project-id="props.projectId"
 			:app-id="props.appId"
 			:artifact-version-id="props.versionId"
+			:live-url="live.liveUrl.value"
+			:live-status="live.status.value"
+			@diagnostic="diagnostics?.add($event)"
 			@assistant-handoff="$emit('assistant-handoff', $event)"
 		/>
 	</div>
