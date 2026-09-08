@@ -1331,12 +1331,38 @@ export const instanceAiNodesAttachmentSchema = z.object({
 });
 export type InstanceAiNodesAttachment = z.infer<typeof instanceAiNodesAttachmentSchema>;
 
+/** One error the live app preview reported to the editor via `postMessage`. */
+export const instanceAiAppPreviewDiagnosticSchema = z.object({
+	kind: z.enum(['vite-error', 'uncaught']),
+	message: z.string().max(2048),
+	file: z.string().max(512).optional(),
+	line: z.number().int().optional(),
+	column: z.number().int().optional(),
+	stack: z.string().max(4096).optional(),
+	at: z.string().datetime(),
+});
+export type InstanceAiAppPreviewDiagnostic = z.infer<typeof instanceAiAppPreviewDiagnosticSchema>;
+
+/**
+ * Errors the live app preview collected since the user's last message. The
+ * editor buffers them and attaches them to the next message it sends.
+ */
+export const instanceAiAppPreviewDiagnosticsAttachmentSchema = z.object({
+	type: z.literal('app-preview-diagnostics'),
+	appId: z.string().min(1).max(64),
+	items: z.array(instanceAiAppPreviewDiagnosticSchema).min(1).max(50),
+});
+export type InstanceAiAppPreviewDiagnosticsAttachment = z.infer<
+	typeof instanceAiAppPreviewDiagnosticsAttachmentSchema
+>;
+
 /** A resource reference attachable to a message (as opposed to a binary file). */
 export const instanceAiResourceAttachmentSchema = z.discriminatedUnion('type', [
 	instanceAiWorkflowAttachmentSchema,
 	instanceAiAgentAttachmentSchema,
 	instanceAiAppAttachmentSchema,
 	instanceAiNodesAttachmentSchema,
+	instanceAiAppPreviewDiagnosticsAttachmentSchema,
 ]);
 export type InstanceAiResourceAttachment = z.infer<typeof instanceAiResourceAttachmentSchema>;
 
