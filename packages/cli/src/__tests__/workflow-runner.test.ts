@@ -222,8 +222,8 @@ describe('processError', () => {
 		const finalizeExecution = vi.spyOn(Container.get(ActiveExecutions), 'finalizeExecution');
 
 		vi.spyOn(executionRepository, 'findSingleExecution')
-			.mockResolvedValueOnce(mock<IExecutionBase>({ status: 'running', finished: false }))
-			.mockResolvedValue(mock<IExecutionBase>({ status: 'success', finished: true }));
+			.mockResolvedValueOnce(mock<IExecutionBase>({ status: 'running' }))
+			.mockResolvedValue(mock<IExecutionBase>({ status: 'success' }));
 
 		globalConfig.executions.mode = 'queue';
 		vi.useFakeTimers();
