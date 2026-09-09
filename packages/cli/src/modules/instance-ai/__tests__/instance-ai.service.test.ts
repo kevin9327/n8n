@@ -5584,7 +5584,7 @@ describe('InstanceAiService — resolveAiPreferencesBlock', () => {
 		});
 
 		expect(service.aiPreferenceService.getApplicable).toHaveBeenCalledWith('user-1', [
-			{ id: 'project-1', name: 'Marketing' },
+			{ id: 'project-1', name: 'Marketing', type: 'team' },
 		]);
 		expect(block).toContain('<ai-preferences>');
 		expect(block).toContain('Preferences for project "Marketing":');
