@@ -165,7 +165,10 @@ describe('search-executions MCP tool', () => {
 	});
 
 	test('pages from the execution ID the cursor encodes', async () => {
-		const cursor = encodeExecutionCursor('50');
+		const cursor = encodeExecutionCursor({
+			version: 1,
+			v1: { id: '50', timestamp: '2026-09-07T12:00:00.000Z' },
+		});
 
 		await createTool().handler({ cursor } as never, {} as never);
 

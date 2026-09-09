@@ -66,7 +66,7 @@ import { getWorkflowProjectDetailsSafe } from '@/workflows/utils';
 import { WorkflowSharingService } from '@/workflows/workflow-sharing.service';
 
 import { EngineV2ExecutionReader } from './engine-v2-execution-reader.service';
-import { encodeCursorForId } from './execution-cursor';
+import { encodeExecutionCursor } from './execution-cursor';
 import { MissingExecutionDataError } from './execution-data/missing-execution-data.error';
 import { isExecutionIdV2 } from './execution-id';
 import { ExecutionPersistence } from './execution-persistence';
@@ -118,7 +118,15 @@ function nextCursorFor(rows: ExecutionSummary[], limit: number): SerializedCurso
 	if (rows.length < limit) return null;
 
 	const lastRow = rows[rows.length - 1];
-	return lastRow ? encodeCursorForId(lastRow.id) : null;
+	if (!lastRow) return null;
+
+	return encodeExecutionCursor({
+		version: 1,
+		v1: {
+			id: lastRow.id,
+			timestamp: new Date(lastRow.startedAt ?? lastRow.createdAt).toISOString(),
+		},
+	});
 }
 
 @Service()
@@ -600,7 +608,7 @@ export class ExecutionService {
 	 *  - the count of executions that satisfy the query
 	 *  - whether the count is an estimate or not
 	 */
-	private async getExecutionsCountForQuery(countQuery: ExecutionSummaries.CountQuery) {
+	async getExecutionsCountForQuery(countQuery: ExecutionSummaries.CountQuery) {
 		if (this.globalConfig.database.type === 'postgresdb') {
 			const liveRows = await this.executionRepository.getLiveExecutionRowsOnPostgres();
 

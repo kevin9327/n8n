@@ -1,31 +1,41 @@
+import { compareExecutionListItems } from '@n8n/api-types';
 import type { IExecutionResponse } from '@n8n/db';
 import { Service } from '@n8n/di';
-import type { ExecutionMode, ExecutionSnapshot, ExecutionStatus } from '@n8n/engine';
+import type {
+	ExecutionListItem,
+	ExecutionSnapshot,
+	ExecutionStatus,
+	SearchExecutionsRequest,
+} from '@n8n/engine';
 import type {
 	ExecutionStatus as ExecutionStatusV1,
 	IRunExecutionData,
 	WorkflowExecuteMode,
+	ExecutionSummary,
 } from 'n8n-workflow';
+import pLimit from 'p-limit';
 
 import { EngineDataPlaneProxyService } from '@/services/engine-data-plane-proxy.service';
 
+import { resolveV2Statuses, toV1Mode, toV1Status } from './engine-v2-mapping';
+import type { ExecutionPosition } from './execution-cursor';
 import { toWorkflowSnapshot, type WorkflowSnapshot } from './execution-data/types';
 import type { ExecutionIdV2 } from './execution-id';
 
-/** A status added later reads as `unknown` rather than being guessed at. */
-const STATUS_V1 = new Map<ExecutionStatus, ExecutionStatusV1>([
-	['queued', 'new'],
-	['running', 'running'],
-	['completed', 'success'],
-	['failed', 'error'],
-	['cancelled', 'canceled'],
-]);
+/** The subset of a range query the data plane search actually understands. */
+export interface EngineV2SearchQuery {
+	/** A v1 status filter; resolved internally to the v2 statuses that map onto it. */
+	status?: ExecutionStatusV1[];
+	mode?: WorkflowExecuteMode;
+	startedAfter?: string;
+	startedBefore?: string;
+	/** The DP source position to resume from, independent of the control plane's own cursor. */
+	before?: ExecutionPosition;
+	limit: number;
+}
 
-/** Anything not manual is a production run. */
-const MODE_V1 = new Map<ExecutionMode, WorkflowExecuteMode>([
-	['manual', 'manual'],
-	['production', 'trigger'],
-]);
+/** Matches the default `schedule` concurrency, so a batch never queues behind itself. */
+const SCOPE_BATCH_SIZE = 4;
 
 /**
  * Reads an engine 2.0 execution for display. The data plane is its only store:
@@ -35,6 +45,111 @@ const MODE_V1 = new Map<ExecutionMode, WorkflowExecuteMode>([
 @Service()
 export class EngineV2ExecutionReader {
 	constructor(private readonly dataPlane: EngineDataPlaneProxyService) {}
+
+	async findMany(
+		query: EngineV2SearchQuery,
+		scope: string[] | 'all',
+		options: { includeTotal?: boolean; schedule?: ReturnType<typeof pLimit> } = {},
+	) {
+		const { includeTotal = true, schedule = pLimit(4) } = options;
+		if (scope !== 'all' && !scope.length) return this.empty();
+
+		const status = resolveV2Statuses(query.status);
+		if (!status.length) return this.empty();
+
+		const request = this.buildSearchRequest(query, scope, status, includeTotal);
+
+		let items: ExecutionSummary[] = [];
+		let total = 0;
+		let hasMore = false;
+		for (const batch of this.batchWorkflowIds(scope)) {
+			const pages = await this.searchBatch(batch, request, schedule);
+			for (const page of pages) {
+				total += page.total ?? 0;
+				hasMore ||= page.nextCursor !== null;
+				items.push(...page.items.map((item) => this.toExecutionSummary(item)));
+			}
+			// Keep only the candidates that could still reach this page.
+			items.sort(compareExecutionListItems);
+			hasMore ||= items.length > query.limit;
+			items = items.slice(0, query.limit);
+		}
+		return { items, total, hasMore };
+	}
+
+	private empty() {
+		return { items: [], hasMore: false, total: 0 };
+	}
+
+	/** Runs one concurrency-bounded batch of chunk searches in parallel. */
+	private async searchBatch(
+		chunks: Array<string[] | 'all'>,
+		request: SearchExecutionsRequest,
+		schedule: ReturnType<typeof pLimit>,
+	) {
+		return await Promise.all(
+			chunks.map(
+				async (workflowIds) =>
+					await schedule(
+						async () => await this.dataPlane.searchExecutions({ ...request, workflowIds }),
+					),
+			),
+		);
+	}
+
+	/**
+	 * Splits `scope` into per-request ID chunks, then groups those into batches of
+	 * `SCOPE_BATCH_SIZE`, so a huge scope never fires more than that many requests at once.
+	 */
+	private batchWorkflowIds(scope: string[] | 'all'): Array<Array<string[] | 'all'>> {
+		const chunks = this.chunkWorkflowIds(scope);
+		const batches: Array<Array<string[] | 'all'>> = [];
+		for (let i = 0; i < chunks.length; i += SCOPE_BATCH_SIZE) {
+			batches.push(chunks.slice(i, i + SCOPE_BATCH_SIZE));
+		}
+		return batches;
+	}
+
+	private buildSearchRequest(
+		query: EngineV2SearchQuery,
+		scope: string[] | 'all',
+		status: ExecutionStatus[],
+		includeTotal: boolean,
+	): SearchExecutionsRequest {
+		return {
+			workflowIds: scope,
+			status,
+			mode: query.mode,
+			createdAfter: query.startedAfter ? new Date(query.startedAfter).toISOString() : undefined,
+			createdBefore: query.startedBefore ? new Date(query.startedBefore).toISOString() : undefined,
+			before: query.before ? { createdAt: query.before.timestamp, id: query.before.id } : undefined,
+			limit: query.limit,
+			includeTotal,
+		};
+	}
+
+	/** `'all'` needs no chunking; a workflow-scoped search stays under the engine's per-request cap. */
+	private chunkWorkflowIds(scope: string[] | 'all'): Array<string[] | 'all'> {
+		if (scope === 'all') return [scope];
+		const ids = [...new Set(scope)];
+		const chunks: Array<string[] | 'all'> = [];
+		for (let i = 0; i < ids.length; i += 10_000) chunks.push(ids.slice(i, i + 10_000));
+		return chunks;
+	}
+
+	private toExecutionSummary(item: ExecutionListItem): ExecutionSummary {
+		return {
+			id: item.id,
+			workflowId: item.workflowId,
+			status: toV1Status(item.status),
+			mode: toV1Mode(item.mode),
+			finished: item.status === 'completed',
+			createdAt: new Date(item.createdAt),
+			startedAt: new Date(item.createdAt),
+			stoppedAt: item.finishedAt ? new Date(item.finishedAt) : undefined,
+			annotation: { tags: [] },
+		};
+	}
 
 	/** `undefined` for absent and for inaccessible alike, so neither reveals the other. */
 	async findOne(
@@ -74,8 +189,8 @@ export class EngineV2ExecutionReader {
 		return {
 			id: snapshot.id,
 			workflowId: snapshot.workflowId,
-			mode: MODE_V1.get(snapshot.mode) ?? 'trigger',
-			status: STATUS_V1.get(snapshot.status) ?? 'unknown',
+			mode: toV1Mode(snapshot.mode),
+			status: toV1Status(snapshot.status),
 			finished: snapshot.status === 'completed',
 			createdAt: startedAt,
 			startedAt,

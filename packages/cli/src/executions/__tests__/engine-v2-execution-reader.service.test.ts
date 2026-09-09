@@ -4,7 +4,10 @@ import { mock } from 'vitest-mock-extended';
 
 import type { EngineDataPlaneProxyService } from '@/services/engine-data-plane-proxy.service';
 
-import { EngineV2ExecutionReader } from '../engine-v2-execution-reader.service';
+import {
+	EngineV2ExecutionReader,
+	type EngineV2SearchQuery,
+} from '../engine-v2-execution-reader.service';
 import type { ExecutionIdV2 } from '../execution-id';
 
 const EXECUTION_ID = '01a038ae-c4a8-7799-8a3e-e3c2ca055cfa' as ExecutionIdV2;
@@ -53,6 +56,76 @@ describe('EngineV2ExecutionReader', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		dataPlane.getExecution.mockResolvedValue(snapshot());
+		dataPlane.searchExecutions.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+	});
+
+	describe('findMany', () => {
+		const query: EngineV2SearchQuery = { limit: 2 };
+		it.each(['manual', 'webhook', 'trigger'] as const)(
+			'forwards the mode %s without conversion',
+			async (mode) => {
+				await reader.findMany({ ...query, mode }, ['wf-1']);
+				expect(dataPlane.searchExecutions).toHaveBeenCalledWith(expect.objectContaining({ mode }));
+			},
+		);
+
+		it('maps supported statuses and drops statuses that the DP cannot match', async () => {
+			await reader.findMany({ ...query, status: ['success', 'crashed', 'waiting'] }, 'all');
+			expect(dataPlane.searchExecutions).toHaveBeenCalledWith(
+				expect.objectContaining({ status: ['completed'] }),
+			);
+			dataPlane.searchExecutions.mockClear();
+			await reader.findMany({ ...query, status: ['crashed', 'waiting'] }, 'all');
+			expect(dataPlane.searchExecutions).not.toHaveBeenCalled();
+		});
+
+		it('deduplicates workflow IDs, merges batches, and sums their counts', async () => {
+			const ids = Array.from({ length: 10_001 }, (_, i) => `wf-${i}`);
+			const row = snapshot();
+			dataPlane.searchExecutions.mockResolvedValueOnce({
+				items: [row],
+				total: 8,
+				nextCursor: null,
+			});
+			dataPlane.searchExecutions.mockResolvedValueOnce({
+				items: [
+					{
+						...row,
+						id: '01a038ae-c4a8-7799-8a3e-e3c2ca055cfb',
+						createdAt: '2026-08-26T10:00:00.000Z',
+					},
+				],
+				total: 3,
+				nextCursor: null,
+			});
+			const result = await reader.findMany({ ...query, limit: 1 }, [...ids, ids[0]]);
+			expect(
+				dataPlane.searchExecutions.mock.calls.map(([body]) => body.workflowIds.length),
+			).toEqual([10_000, 1]);
+			expect(result).toMatchObject({
+				total: 11,
+				hasMore: true,
+				items: [{ id: '01a038ae-c4a8-7799-8a3e-e3c2ca055cfb', annotation: { tags: [] } }],
+			});
+			expect(dataPlane.getExecution).not.toHaveBeenCalled();
+		});
+
+		it('passes date bounds and the DP source position independently', async () => {
+			await reader.findMany(
+				{
+					...query,
+					startedBefore: '2026-09-01',
+					before: { id: EXECUTION_ID, timestamp: '2026-08-30T00:00:00.000Z' },
+				},
+				'all',
+			);
+			expect(dataPlane.searchExecutions).toHaveBeenCalledWith(
+				expect.objectContaining({
+					createdBefore: '2026-09-01T00:00:00.000Z',
+					before: { id: EXECUTION_ID, createdAt: '2026-08-30T00:00:00.000Z' },
+				}),
+			);
+		});
 	});
 
 	describe('findOne', () => {

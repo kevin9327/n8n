@@ -221,7 +221,10 @@ describe('`parseRangeQuery` middleware', () => {
 		});
 
 		test('should set range.beforeId from a valid cursor', () => {
-			const cursor = encodeExecutionCursor('123');
+			const cursor = encodeExecutionCursor({
+				version: 1,
+				v1: { id: '123', timestamp: '2026-09-07T12:00:00.000Z' },
+			});
 			const req = mock<ExecutionRequest.GetMany>({
 				query: {
 					cursor,
@@ -235,6 +238,27 @@ describe('`parseRangeQuery` middleware', () => {
 			parseRangeQuery(req, res, nextFn);
 
 			expect(req.rangeQuery.range.beforeId).toBe('123');
+			expect(nextFn).toBeCalledTimes(1);
+		});
+
+		test('should leave `beforeId` unset for a v2 cursor position', () => {
+			const cursor = encodeExecutionCursor({
+				version: 1,
+				v2: { id: '01a038ae-c4a8-7799-8a3e-e3c2ca055cfa', timestamp: '2026-09-07T12:00:00.000Z' },
+			});
+			const req = mock<ExecutionRequest.GetMany>({
+				query: {
+					cursor,
+					filter: undefined,
+					limit: undefined,
+					firstId: undefined,
+					lastId: undefined,
+				},
+			});
+
+			parseRangeQuery(req, res, nextFn);
+
+			expect(req.rangeQuery.range.beforeId).toBeUndefined();
 			expect(nextFn).toBeCalledTimes(1);
 		});
 

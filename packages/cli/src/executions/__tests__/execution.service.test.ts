@@ -12,13 +12,13 @@ import type {
 	Project,
 	User,
 	WorkflowHistoryRepository,
+	WorkflowHistory,
 } from '@n8n/db';
-import type { WorkflowHistory } from '@n8n/db';
 import { Container } from '@n8n/di';
 import { QueryFailedError } from '@n8n/typeorm';
-import { mock } from 'vitest-mock-extended';
 import type { ExecutionSummary, IRun, IRunData, IRunExecutionData, ITaskData } from 'n8n-workflow';
 import { ManualExecutionCancelledError, WorkflowOperationError } from 'n8n-workflow';
+import { mock } from 'vitest-mock-extended';
 
 import type { ActiveExecutions } from '@/active-executions';
 import type { ConcurrencyControlService } from '@/concurrency/concurrency-control.service';
@@ -26,14 +26,14 @@ import { AbortedExecutionRetryError } from '@/errors/aborted-execution-retry.err
 import { MissingExecutionStopError } from '@/errors/missing-execution-stop.error';
 import { BadRequestError } from '@/errors/response-errors/bad-request.error';
 import { NotFoundError } from '@/errors/response-errors/not-found.error';
+import type { EventService } from '@/events/event.service';
+import type { EngineV2ExecutionReader } from '@/executions/engine-v2-execution-reader.service';
 import { encodeExecutionCursor } from '@/executions/execution-cursor';
 import { MissingExecutionDataError } from '@/executions/execution-data/missing-execution-data.error';
 import type { ExecutionPersistence } from '@/executions/execution-persistence';
-import type { EngineV2ExecutionReader } from '@/executions/engine-v2-execution-reader.service';
 import type { ExecutionRedactionServiceProxy } from '@/executions/execution-redaction-proxy.service';
 import { ExecutionService } from '@/executions/execution.service';
 import type { ExecutionRequest } from '@/executions/execution.types';
-import type { EventService } from '@/events/event.service';
 import type { ExecutionStopService } from '@/scaling/execution-stop.service';
 import { ScalingService } from '@/scaling/scaling.service';
 import type { Job } from '@/scaling/scaling.types';
@@ -986,16 +986,22 @@ describe('ExecutionService', () => {
 		});
 
 		it('findRangeWithCount returns a cursor for the last row when the page is full', async () => {
+			const startedAt = new Date('2026-09-07T12:00:00.000Z');
 			executionRepository.findManyByRangeQuery.mockResolvedValue([
-				mock<ExecutionSummary>({ id: '2' }),
-				mock<ExecutionSummary>({ id: '1' }),
+				mock<ExecutionSummary>({ id: '2', startedAt, createdAt: startedAt }),
+				mock<ExecutionSummary>({ id: '1', startedAt, createdAt: startedAt }),
 			]);
 
 			const { nextCursor } = await executionService.findRangeWithCount(
 				mock({ range: { limit: 2 } }),
 			);
 
-			expect(nextCursor).toBe(encodeExecutionCursor('1'));
+			expect(nextCursor).toBe(
+				encodeExecutionCursor({
+					version: 1,
+					v1: { id: '1', timestamp: startedAt.toISOString() },
+				}),
+			);
 		});
 
 		it('findRangeWithCount returns null when the page is partial', async () => {
@@ -1011,17 +1017,23 @@ describe('ExecutionService', () => {
 		});
 
 		it('findLatestCurrentAndCompleted derives the cursor from the completed page, not current', async () => {
+			const startedAt = new Date('2026-09-07T12:00:00.000Z');
 			executionRepository.findManyByRangeQuery.mockImplementation(async (query) =>
 				query.status?.includes('running')
-					? [mock<ExecutionSummary>({ id: '20' })]
-					: [mock<ExecutionSummary>({ id: '10' })],
+					? [mock<ExecutionSummary>({ id: '20', startedAt, createdAt: startedAt })]
+					: [mock<ExecutionSummary>({ id: '10', startedAt, createdAt: startedAt })],
 			);
 
 			const { nextCursor } = await executionService.findLatestCurrentAndCompleted(
 				mock({ range: { limit: 1 } }),
 			);
 
-			expect(nextCursor).toBe(encodeExecutionCursor('10'));
+			expect(nextCursor).toBe(
+				encodeExecutionCursor({
+					version: 1,
+					v1: { id: '10', timestamp: startedAt.toISOString() },
+				}),
+			);
 		});
 
 		it('findLatestCurrentAndCompleted applies the cursor to completed rows only', async () => {

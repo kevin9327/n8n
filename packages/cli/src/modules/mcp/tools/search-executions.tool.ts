@@ -118,7 +118,7 @@ export const createSearchExecutionsTool = (
 
 			const safeLimit = Math.min(Math.max(1, limit), MAX_RESULTS);
 			const sharingOptions = await executionService.buildSharingOptions('workflow:read');
-			const beforeId = parseExecutionCursor(cursor);
+			const parsedCursor = parseExecutionCursor(cursor);
 
 			const query = {
 				kind: 'range' as const,
@@ -126,7 +126,7 @@ export const createSearchExecutionsTool = (
 				sharingOptions,
 				range: {
 					limit: safeLimit,
-					...(beforeId ? { beforeId } : {}),
+					...(parsedCursor.v1 ? { beforeId: parsedCursor.v1.id } : {}),
 				},
 				...(workflowId ? { workflowId } : {}),
 				...(status?.length ? { status } : {}),
