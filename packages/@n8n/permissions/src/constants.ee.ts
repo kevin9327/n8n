@@ -140,7 +140,6 @@ export const PERSONAL_SPACE_SHARING_SETTING = {
 };
 
 export const EXTERNAL_SECRETS_SYSTEM_ROLES_ENABLED_SETTING = {
-	key: 'externalSecrets.systemRolesEnabled',
 	roleScopeMap: {
 		[PROJECT_ADMIN_ROLE_SLUG]: [
 			'externalSecretsProvider:create',

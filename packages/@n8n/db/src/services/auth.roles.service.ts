@@ -144,24 +144,12 @@ export class AuthRolesService {
 		return scopes;
 	}
 
-	private async getExternalSecretsSystemRolesScopes(
-		roleSlug: string,
-		tx: EntityManager,
-	): Promise<string[]> {
-		const settingRow = await tx.findOneBy(Settings, {
-			key: EXTERNAL_SECRETS_SYSTEM_ROLES_ENABLED_SETTING.key,
-		});
-
-		if (settingRow?.value !== 'true') {
-			return [];
-		}
-
-		const roleScopeMap = EXTERNAL_SECRETS_SYSTEM_ROLES_ENABLED_SETTING.roleScopeMap;
-		const scopesForRole = roleScopeMap[roleSlug];
+	private getExternalSecretsSystemRolesScopes(roleSlug: string): string[] {
+		const scopesForRole = EXTERNAL_SECRETS_SYSTEM_ROLES_ENABLED_SETTING.roleScopeMap[roleSlug];
 
 		if (scopesForRole) {
 			this.logger.debug(
-				`${EXTERNAL_SECRETS_SYSTEM_ROLES_ENABLED_SETTING.key} is enabled - allowing ${scopesForRole.join(', ')} scopes to ${roleSlug} role`,
+				`Granting external secrets scopes ${scopesForRole.join(', ')} to ${roleSlug} role`,
 			);
 			return scopesForRole;
 		}
@@ -185,9 +173,9 @@ export class AuthRolesService {
 			scopes.push(...(await this.getPersonalOwnerSettingsScopes(tx)));
 		}
 
-		// External secrets system roles scopes
+		// Project admin and editor roles always carry the external secrets scopes.
 		if (roleSlug === PROJECT_ADMIN_ROLE_SLUG || roleSlug === PROJECT_EDITOR_ROLE_SLUG) {
-			scopes.push(...(await this.getExternalSecretsSystemRolesScopes(roleSlug, tx)));
+			scopes.push(...this.getExternalSecretsSystemRolesScopes(roleSlug));
 		}
 
 		return scopes;

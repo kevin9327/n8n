@@ -2,6 +2,24 @@
 
 This list shows all the versions which include breaking changes and how to upgrade.
 
+# 3.0.0
+
+### What changed?
+
+The project `admin` and `editor` roles now always carry the external secrets
+scopes. The "Enable external secrets for project roles" toggle in Settings →
+External Secrets is removed, together with its `POST /external-secrets/settings`
+endpoint. Instances need the `feat:externalSecrets` license and the
+`N8N_ENV_FEAT_EXTERNAL_SECRETS_ROLE_BASED_ACCESS` flag for the feature to be
+usable, as before.
+
+### When is action necessary?
+
+No action is necessary. On the first v3 boot, existing instances that had the
+toggle off grant these scopes to the project `admin` and `editor` roles
+automatically. Project admins and editors can then read and use project secrets
+without an extra admin action.
+
 # 2.0.0
 
 ### What changed?
