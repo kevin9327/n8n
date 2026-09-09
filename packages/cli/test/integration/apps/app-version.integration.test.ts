@@ -388,7 +388,7 @@ describe('GET /apps/:namespace with an active version', () => {
 
 		expect(response.headers['content-type']).toContain('text/html');
 		expect(response.headers['content-security-policy']).toContain('sandbox');
-		expect(response.headers['cache-control']).toBe('no-cache');
+		expect(response.headers['cache-control']).toBe('no-store');
 		expect(withoutPageToken(response.text)).toBe(INDEX_HTML);
 	});
 
@@ -405,7 +405,7 @@ describe('GET /apps/:namespace with an active version', () => {
 
 		expect(response.headers['content-type']).toContain('text/html');
 		expect(response.headers['content-security-policy']).toContain('sandbox');
-		expect(response.headers['cache-control']).toBe('no-cache');
+		expect(response.headers['cache-control']).toBe('no-store');
 		expect(withoutPageToken(response.text)).toBe(about);
 	});
 
