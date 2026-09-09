@@ -26,7 +26,7 @@ const i18n = useI18n();
 const iframe = useTemplateRef<HTMLIFrameElement>('iframe');
 const refreshCount = ref(0);
 
-// One live document survives every `apps build`; only the built preview remounts per version.
+// One live document survives every publish; only the built preview remounts per version.
 const iframeKey = computed(() => (props.liveUrl ? 'live' : (props.versionId ?? '')));
 
 // A remount already loads a fresh document; carrying `r` over would keep a

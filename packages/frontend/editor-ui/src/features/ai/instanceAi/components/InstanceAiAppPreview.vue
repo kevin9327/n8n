@@ -14,9 +14,9 @@ import type { AppPreviewDiagnostics } from '../composables/useAppPreviewDiagnost
 const props = defineProps<{
 	appId: string;
 	projectId: string;
-	/** Latest built version; absent until the first `apps build` result arrives. */
+	/** Latest published version; absent until the first `apps publish` result arrives. */
 	versionId?: string;
-	/** An `apps build` call for this app is in flight. */
+	/** An `apps publish` call for this app is in flight. */
 	building?: boolean;
 }>();
 
@@ -74,7 +74,7 @@ watch(() => props.appId, syncAppTarget, { immediate: true });
 			>
 				<N8nIcon icon="spinner" spin size="small" />
 				<span :class="$style.buildingLabel">
-					{{ i18n.baseText('instanceAi.appPreview.building') }}
+					{{ i18n.baseText('instanceAi.appPreview.publishing') }}
 				</span>
 			</div>
 		</Transition>
@@ -83,6 +83,7 @@ watch(() => props.appId, syncAppTarget, { immediate: true });
 			:project-id="props.projectId"
 			:app-id="props.appId"
 			:artifact-version-id="props.versionId"
+			:thread-id="thread.id"
 			:live-url="live.liveUrl.value"
 			:live-status="live.status.value"
 			@diagnostic="diagnostics?.add($event)"
